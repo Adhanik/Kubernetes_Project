@@ -8,7 +8,7 @@ RUN apt-get update && \
     apt-get install python3 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
-EXPOSE 8000
+EXPOSE 8000 22
 
 CMD ["python3", "-m", "http.server", "8000"]
 
