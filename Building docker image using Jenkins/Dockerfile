@@ -5,7 +5,7 @@ FROM ubuntu:20.04
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && \
-    apt-get install python3 && \
+    apt-get install -y python3 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 EXPOSE 8000 22
