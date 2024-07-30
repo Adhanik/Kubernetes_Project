@@ -338,3 +338,4 @@ Then if we run the same command again,
     service/kubernetes   ClusterIP   10.96.0.1    <none>        443/TCP   15d
     [ec2-user@ip-172-31-25-174 Kubernetes]$
 
+also check kubectl cluster-info
