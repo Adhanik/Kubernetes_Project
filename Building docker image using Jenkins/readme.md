@@ -293,6 +293,7 @@ Previous result
     adminnik/pipeline-demo   v1.37     b645e7b055fe   11 days ago   112MB
 
 After result
+new image and tags are deleted after uploading to dockerhub
 
 # Building KB deployment using ansible
 
@@ -339,3 +340,155 @@ Then if we run the same command again,
     [ec2-user@ip-172-31-25-174 Kubernetes]$
 
 also check kubectl cluster-info
+
+
+# Errors faced while running jenkins pipeline which triggers ansible playbook
+
+    stage('Kubernetes Deployment using ansible'){
+        sshagent(['ansible_demo']){
+            def remotePath = '/home/ec2-user/Ansible/'
+            sh "ssh -o StrictHostKeyChecking=no ec2-user@18.206.56.201 'cd ${remotePath} && ansible-playbook playbook.yml '"
+        }
+    }
+
+When jenkins is triggering the ansible playbook, its failing with this error 
+
+    TASK [Delete old deployment] ***************************************************
+    fatal: [172.31.25.174]: FAILED! => {"changed": true, "cmd": ["kubectl", "delete", "-f", "/home/ec2-user/Kubernetes/Deployment.yml"], "delta": "0:00:00.076682", "end": "2024-07-30 13:21:33.842866", "msg": "non-zero return code", "rc": 1, "start": "2024-07-30 13:21:33.766184", "stderr": "E0730 13:21:33.840031   18580 memcache.go:265] couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp 127.0.0.1:8080: connect: connection refused\nerror: unable to recognize \"/home/ec2-user/Kubernetes/Deployment.yml\": Get \"http://localhost:8080/api?timeout=32s\": dial tcp 127.0.0.1:8080: connect: connection refused", "stderr_lines": ["E0730 13:21:33.840031   18580 memcache.go:265] couldn't get current server API group list: Get \"http://localhost:8080/api?timeout=32s\": dial tcp 127.0.0.1:8080: connect: connection refused", "error: unable to recognize \"/home/ec2-user/Kubernetes/Deployment.yml\": Get \"http://localhost:8080/api?timeout=32s\": dial tcp 127.0.0.1:8080: connect: connection refused"], "stdout": "", "stdout_lines": []}
+
+The error message indicates that kubectl is unable to connect to the Kubernetes API server, likely because it's trying to connect to localhost:8080, which is not the correct API server endpoint for your Kubernetes cluster. This issue often arises if kubectl is not configured properly on the Ansible server or if the Kubernetes cluster's API server is not accessible from there.
+
+Check kubectl Configuration:
+
+    Ensure that kubectl is configured correctly on the Ansible server. The kubectl configuration is typically stored in ~/.kube/config.
+    Verify that the configuration file has the correct context set and points to the correct Kubernetes API server.
+
+So we did not have kubectl installed on our ansible server. We will install kubectl on our ansible server.
+
+# Why do we need kubectl on ansible server?
+
+If you want to manage a Kubernetes cluster using Ansible from a separate server (Ansible server), you need to have `kubectl` installed on the Ansible server along with a valid `kubeconfig` file. The `kubeconfig` file contains the necessary configurations and credentials to connect to the Kubernetes API server.
+
+Here’s why and how to set it up:
+
+### Why You Need `kubectl` and `kubeconfig` on the Ansible Server
+
+1. **Communication with the Kubernetes Cluster**: `kubectl` is the command-line tool used to interact with the Kubernetes API server. Without `kubectl`, the Ansible server cannot issue commands to the Kubernetes cluster.
+2. **Authentication and Authorization**: The `kubeconfig` file provides the necessary credentials and configuration details to authenticate and authorize commands against the Kubernetes API server.
+
+### Setting Up `kubectl` and `kubeconfig` on the Ansible Server
+
+1. **Install `kubectl`**: See section below - Installing kubectl on Ansible 
+
+2. **Copy the `kubeconfig` File**:
+   - Copy the `kubeconfig` file from the Kubernetes node (where Minikube is running) to the Ansible server. This file is typically located at `~/.kube/config` on the Kubernetes node.
+   - On the Kubernetes node, you can find the file using:
+     ```bash
+     cat ~/.kube/config
+     ```
+   - Transfer this file to the Ansible server, ensuring it is placed in the `~/.kube/` directory. You can use `scp` or other secure methods to transfer the file.
+
+   if dir doesnt exist, make dir using -  mkdir -p ~/.kube
+
+
+3. **Ensure Correct Permissions**:
+   - Ensure that the `kubeconfig` file on the Ansible server has the correct permissions and is accessible only by the user running the Ansible playbook:
+     ```bash
+     chmod 600 ~/.kube/config
+     ```
+
+4. **Test the Configuration**:
+   - Once `kubectl` and the `kubeconfig` file are set up, test the setup by running `kubectl get nodes` from the Ansible server. This should list the nodes in your Kubernetes cluster, confirming that the server can communicate with the cluster.
+
+By having `kubectl` and the appropriate configuration on your Ansible server, your Ansible playbooks can manage Kubernetes resources effectively, just as if they were running directly on the Kubernetes node.
+
+
+## SOME PRECHECKS
+
+I did  ansible -m ping 172.31.25.174 (private ip of KB) on ansible node, its success. also i did below commands on kube node
+
+[ec2-user@ip-172-31-25-174 ~]$ kubectl cluster-info
+Kubernetes control plane is running at https://192.168.49.2:8443
+CoreDNS is running at https://192.168.49.2:8443/api/v1/namespaces/kube-system/services/kube-dns:dns/proxy
+
+To further debug and diagnose cluster problems, use 'kubectl cluster-info dump'.
+[ec2-user@ip-172-31-25-174 ~]$ kubectl get all
+NAME                 TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE
+service/kubernetes   ClusterIP   10.96.0.1    <none>        443/TCP   15d
+[ec2-user@ip-172-31-25-174 ~]$
+
+The issue might be due to kubectl not being properly configured on the Ansible server or the API server being inaccessible from the Ansible server.
+
+# Installing kubectl on Ansible 
+
+curl -O https://s3.us-west-2.amazonaws.com/amazon-eks/1.30.0/2024-05-12/bin/linux/amd64/kubectl
+curl -O https://s3.us-west-2.amazonaws.com/amazon-eks/1.30.0/2024-05-12/bin/linux/amd64/kubectl.sha256
+sha256sum -c kubectl.sha256    -- it should give ok
+chmod +x ./kubectl
+mkdir -p $HOME/bin && cp ./kubectl $HOME/bin/kubectl && export PATH=$HOME/bin:$PATH
+echo 'export PATH=$HOME/bin:$PATH' >> ~/.bashrc
+
+# Remedy on how to resolve
+
+Ensure that the kubectl configuration file (~/.kube/config or specified by the KUBECONFIG environment variable) on the Ansible server is pointing to the correct API server endpoint (https://192.168.49.2:8443 as shown in your output).
+The kubectl configuration file on the Ansible server should be the same or equivalent to the one on the Kubernetes node.
+
+[ec2-user@ip-172-31-25-174 ~]$ kubectl cluster-info
+Kubernetes control plane is running at https://192.168.49.2:8443
+CoreDNS is running at https://192.168.49.2:8443/api/v1/namespaces/kube-system/services/kube-dns:dns/proxy
+
+
+We see that the Kube API server endpoit is https://192.168.49.2:8443, lets look at ansible kube config file is pointing to same or not.
+
+We have copied the config file from kube node to ansible node, and we can see inside the config file that it is pointing to correct API server endpoint.
+
+server: https://192.168.49.2:8443
+
+If we now do kubectl get nodes, we get below error
+
+Error in configuration:
+* unable to read client-cert /home/ec2-user/.minikube/profiles/minikube/client.crt for minikube due to open /home/ec2-user/.minikube/profiles/minikube/client.crt: no such file or directory
+* unable to read client-key /home/ec2-user/.minikube/profiles/minikube/client.key for minikube due to open /home/ec2-user/.minikube/profiles/minikube/client.key: no such file or directory
+* unable to read certificate-authority /home/ec2-user/.minikube/ca.crt for minikube due to open /home/ec2-user/.minikube/ca.crt: no such file or directory
+
+The error indicates that the kubeconfig file is referencing certificate files (client.crt, client.key, ca.crt) that are not present on the Ansible server. These certificate files are required for authenticating and securing the communication with the Kubernetes cluster. We will copy these from kkube node inside ansible cluster in specified path only as shown in error
+
+# Copying cert keys from kube node to ansbile node
+
+To ensure your Ansible server can connect to the Kubernetes cluster, you'll need to copy specific certificate and key files referenced by the kubeconfig file. The necessary files usually include:
+
+    Client Certificate (client.crt or similar): Used to identify the user.
+    Client Key (client.key or similar): The private key for the client certificate.
+    CA Certificate (ca.crt or similar): Used to verify the identity of the API server.
+
+    Given your kubeconfig file, you should locate the exact files it references. The files you're likely looking for in the .minikube directory on your Kubernetes server are:
+
+    ca.crt: Certificate authority file, typically used to verify the server's identity.
+    client.crt: Client certificate file.
+    client.key: Private key for the client certificate.
+
+    mkdir -p /home/ec2-user/.minikube/profiles/minikube
+    copy certs on these path
+    change file permissions
+        [ec2-user@ip-172-31-94-208 minikube]$ chmod 600 client.key
+        [ec2-user@ip-172-31-94-208 minikube]$ ls -ltr
+        total 8
+        -rw-------. 1 ec2-user ec2-user 1147 Aug  1 11:45 client.crt
+        -rw-------. 1 ec2-user ec2-user 1679 Aug  1 11:46 client.key
+ 
+
+# Ansible not able to build kb maifest files
+
+TASK [Create new Deployment] *******************************************************************************************************************************************************************************
+fatal: [172.31.25.174]: FAILED! => {"changed": true, "cmd": ["kubectl", "apply", "-f", "/home/ec2-user/Kubernetes/Deployment.yml"], "delta": "0:00:00.070843", "end": "2024-08-02 13:40:52.919665", "msg": "non-zero return code", "rc": 1, "start": "2024-08-02 13:40:52.848822", "stderr": "error: error validating \"/home/ec2-user/Kubernetes/Deployment.yml\": error validating data: failed to download openapi: Get \"http://localhost:8080/openapi/v2?timeout=32s\": dial tcp 127.0.0.1:8080: connect: connection refused; if you choose to ignore these errors, turn validation off with --validate=false", "stderr_lines": ["error: error validating \"/home/ec2-user/Kubernetes/Deployment.yml\": error validating data: failed to download openapi: Get \"http://localhost:8080/openapi/v2?timeout=32s\": dial tcp 127.0.0.1:8080: connect: connection refused; if you choose to ignore these errors, turn validation off with --validate=false"], "stdout": "", "stdout_lines": []}
+
+PLAY RECAP *************************************************************************************************************************************************************************************************
+172.31.25.174              : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0
+
+
+we have tried to update kube config file in ansible server to point to kb node , still this is not solving. we installed kubectl on ansible, copied same certs from KB node to  ansible node, and tried to do kubectl get all, but it does not seems to be working. 
+
+Jenkins error
+
+TASK [Create new Deployment] ***************************************************
+fatal: [172.31.25.174]: FAILED! => {"changed": true, "cmd": ["kubectl", "apply", "-f", "/home/ec2-user/Kubernetes/Deployment.yml"], "delta": "0:00:00.062642", "end": "2024-08-02 13:59:00.857563", "msg": "non-zero return code", "rc": 1, "start": "2024-08-02 13:59:00.794921", "stderr": "error: error validating \"/home/ec2-user/Kubernetes/Deployment.yml\": error validating data: failed to download openapi: Get \"http://localhost:8080/openapi/v2?timeout=32s\": dial tcp 127.0.0.1:8080: connect: connection refused; if you choose to ignore these errors, turn validation off with --validate=false", "stderr_lines": ["error: error validating \"/home/ec2-user/Kubernetes/Deployment.yml\": error validating data: failed to download openapi: Get \"http://localhost:8080/openapi/v2?timeout=32s\": dial tcp 127.0.0.1:8080: connect: connection refused; if you choose to ignore these errors, turn validation off with --validate=false"], "stdout": "", "stdout_lines": []}

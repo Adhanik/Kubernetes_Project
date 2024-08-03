@@ -1,0 +1,107 @@
+node {
+    stage('Git checkout'){
+        git 'https://github.com/Adhanik/Kubernetes_Project.git'
+    }
+    stage('Copying docker file to ansible server over ssh'){
+        sshagent (['ansible_demo']){
+            sh 'ssh -o StrictHostKeyChecking=no ec2-user@54.197.198.208'
+            sh 'scp -r /var/lib/jenkins/workspace/pipeline-demo/Building docker image using Jenkins/* ec2-user@54.197.198.208:/home/ec2-user/Building docker image using Jenkins'
+        }
+        
+    }
+    stage('Building the docker file'){
+        sshagent(['ansible_demo']){
+            sh 'ssh -o StrictHostKeyChecking=no ec2-user@54.197.198.208 cd /home/ec2-user/Building docker image using Jenkins'
+            sh 'ssh -o StrictHostKeyChecking=no ec2-user@54.197.198.208 docker image build -t $JOB_NAME:v1.$BUILD_ID . '
+        }
+    }
+    
+}
+
+# We are getting the below error for above pipeline 
+scp -r /var/lib/jenkins/workspace/pipeline-demo/Building docker image using 'Jenkins/*' ec2-user@54.197.198.208:/home/ec2-user/Building docker image using Jenkins
+Jenkins: No such file or directory
+
+# Sol 
+The error you're encountering is due to the presence of spaces in your file paths. When using commands like scp and ssh, spaces in file paths need to be properly escaped or enclosed in quotes to be interpreted correctly.
+
+Escape Spaces or Use Quotes:
+    You can escape the spaces using \.
+    Or enclose the entire path in double quotes " ".
+
+ssh Command:
+
+    Combine cd and docker image build commands using && and enclose the entire command in double quotes.
+
+It appears that the paths are correct, but the issue may be related to how the paths are being interpreted by the sh command within the Jenkins pipeline.
+
+Let's try another approach by breaking down the steps and ensuring that we correctly handle paths with spaces.
+
+Use of Variables:
+
+Defined srcPath, destPath, and remotePath variables to make the script cleaner and easier to understand.
+
+    def srcPath = '/var/lib/jenkins/workspace/pipeline-demo/Building\\ docker\\ image\\ using\\ Jenkins/*'
+    def destPath = '/home/ec2-user/Building\\ docker\\ image\\ using\\ Jenkins'
+    sh "scp -o StrictHostKeyChecking=no -r ${srcPath} ec2-user@54.197.198.208:${destPath}"
+
+    def remotePath = '/home/ec2-user/Building\\ docker\\ image\\ using\\ Jenkins'
+    sh "ssh -o StrictHostKeyChecking=no ec2-user@54.197.198.208 'cd ${remotePath} && docker image build -t $JOB_NAME:v1.$BUILD_ID .'"
+
+
+# String Interpolation
+
+This did not work 
+
+    stage('Push docker images to docker hub'){
+        sshagent(['ansible_demo']){
+            withCredentials([string(credentialsId: 'dockerhub_password', variable: 'dockerhub_password')]) {
+                sh "docker login -u adminnik -p ${dockerhub_password}"
+                sh "ssh -o StrictHostKeyChecking=no ec2-user@54.197.198.208 'docker image push adminnik/$JOB_NAME:v1.$BUILD_ID'"
+                sh "ssh -o StrictHostKeyChecking=no ec2-user@54.197.198.208 'docker image push adminnik/$JOB_NAME:latest'"
+            }
+        }
+    
+    }
+
+# Then we tried this, this also did not work. But we can see how we can pass mulitple lines of code using EOF
+
+To avoid the Groovy string interpolation issue and the syntax error, you should use a `withEnv` block to set the password as an environment variable. Here are the changes for the `Push docker images to Docker Hub` stage:
+
+```groovy
+stage('Push docker images to docker hub') {
+    sshagent(['ansible_demo']) {
+        withCredentials([string(credentialsId: 'dockerhub_password', variable: 'dockerhub_password')]) {
+            sh """
+                ssh -o StrictHostKeyChecking=no ec2-user@54.197.198.208 << EOF
+                docker login -u adminnik -p ${dockerhub_password}
+                docker image push adminnik/$JOB_NAME:v1.$BUILD_ID
+                docker image push adminnik/$JOB_NAME:latest
+                EOF
+            """
+        }
+    }
+}
+```
+
+This approach avoids Groovy string interpolation by using a multiline `sh` script block. The `<< EOF` syntax allows you to execute multiple commands within a single SSH session, making it more secure and less prone to syntax errors.
+
+# What worked
+
+To avoid the Groovy string interpolation issue and the syntax error in the `ssh` command, you can pass the password directly in a way that avoids using Groovy string interpolation. Here's an updated version of your `Push docker images to Docker Hub` stage:
+
+```groovy
+stage('Push docker images to docker hub') {
+    sshagent(['ansible_demo']) {
+        withCredentials([string(credentialsId: 'dockerhub_password', variable: 'dockerhub_password')]) {
+            sh "ssh -o StrictHostKeyChecking=no ec2-user@54.197.198.208 'docker login -u adminnik --password-stdin' <<< \"${dockerhub_password}\""
+            sh "ssh -o StrictHostKeyChecking=no ec2-user@54.197.198.208 'docker image push adminnik/$JOB_NAME:v1.$BUILD_ID'"
+            sh "ssh -o StrictHostKeyChecking=no ec2-user@54.197.198.208 'docker image push adminnik/$JOB_NAME:latest'"
+        }
+    }
+}
+```
+
+In this version:
+- The `docker login` command uses `--password-stdin` to read the password from standard input, avoiding the need to include it directly in the command line.
+- The password is passed using the `<<<` operator, which is safer and avoids Groovy string interpolation.

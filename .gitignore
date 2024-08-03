@@ -1,4 +1,7 @@
-/EC2
-/Learnings
-/Project
-/Jenkins
+/EC2/terraform.tfstate
+/EC2/terraform.tfstate.backup
+/EC2/mykeypair.pem
+/EC2/.terraform.lock.hcl
+/EC2/.terraform
+
+

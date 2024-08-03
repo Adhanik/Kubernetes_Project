@@ -1,0 +1,61 @@
+node {
+    stage('Git checkout'){
+        git 'https://github.com/Adhanik/Kubernetes_Project.git'
+    }
+
+    stage('Copying docker file to ansible server over ssh'){
+        sshagent (['ansible_demo']){
+            // Escape spaces in paths
+            // Define source and destination paths in a map
+            def paths = [
+                'Building\\ docker\\ image\\ using\\ Jenkins/' : '/home/ec2-user/Building\\ docker\\ image\\ using\\ Jenkins',
+                'Ansible' : '/home/ec2-user/Ansible/',
+                'Kubernetes' : '/home/ec2-user/Kubernetes/'
+
+            ]
+            // Iterate over the map and copy files
+            paths.each { srcFolder, destPath ->
+               def srcPath = "/var/lib/jenkins/workspace/pipeline-demo/${srcFolder}/*"
+               sh "ssh -o StrictHostKeyChecking=no ec2-user@54.197.198.208 'mkdir -p ${destPath}'"
+               sh "scp -o StrictHostKeyChecking=no -r ${srcPath} ec2-user@54.197.198.208:${destPath}"
+            
+            }
+
+        }
+    }
+
+    stage('Building the docker file'){
+        sshagent(['ansible_demo']){
+            def remotePath = '/home/ec2-user/Building\\ docker\\ image\\ using\\ Jenkins'
+            sh "ssh -o StrictHostKeyChecking=no ec2-user@54.197.198.208 'cd ${remotePath} && docker image build -t $JOB_NAME:v1.$BUILD_ID .'"
+        }
+    }
+    
+    stage('Docker image tagging'){
+        sshagent(['ansible_demo']){
+            def remotePath = '/home/ec2-user/Building\\ docker\\ image\\ using\\ Jenkins'
+            sh "ssh -o StrictHostKeyChecking=no ec2-user@54.197.198.208 'docker image tag $JOB_NAME:v1.$BUILD_ID adminnik/$JOB_NAME:v1.$BUILD_ID'"
+            sh "ssh -o StrictHostKeyChecking=no ec2-user@54.197.198.208 'docker image tag $JOB_NAME:v1.$BUILD_ID adminnik/$JOB_NAME:latest'"
+        }
+    }
+
+    stage('Push docker images to docker hub'){
+        sshagent(['ansible_demo']){
+            withCredentials([string(credentialsId: 'dockerhub_password', variable: 'dockerhub_password')]) {
+                sh "ssh -o StrictHostKeyChecking=no ec2-user@54.197.198.208 'docker login -u adminnik --password-stdin' <<< \"${dockerhub_password}\""
+                sh "ssh -o StrictHostKeyChecking=no ec2-user@54.197.198.208 'docker image push adminnik/$JOB_NAME:v1.$BUILD_ID'"
+                sh "ssh -o StrictHostKeyChecking=no ec2-user@54.197.198.208 'docker image push adminnik/$JOB_NAME:latest'"
+            }
+        }
+    
+    }
+
+    stage('Connect to KB from ansible server'){
+        sshagent(['ansible_demo']){
+
+            def srcPath = '/home/ec2-user/Building\\ docker\\ image\\ using\\ Jenkins'
+            sh "scp -o StrictHostKeyChecking=no -r ${srcPath} ec2-user@54.197.198.208:${destPath}"
+
+        }
+    }
+}
